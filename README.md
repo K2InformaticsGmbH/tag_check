@@ -1,2 +1,9 @@
-# tag_check
-recursively verify repo tagging
+tag_check
+=====
+
+An OTP library
+
+Build
+-----
+
+    $ rebar3 compile
