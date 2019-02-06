@@ -1,5 +1,4 @@
 -module(tag_check).
--include("token.hrl").
 
 %% API exports
 -export([main/1, split_dot/1]).
@@ -15,31 +14,73 @@
 main([]) ->
 	inets:start(),
 	ssl:start(),
-	Data = read_file(?GQUrl, ?Token, "dderl", "K2InformaticsGmbH", "master", "rebar.config"),
+	Priv = code:priv_dir(tag_check),
+	io:format("~p:~p Priv ~s~n", [?MODULE, ?LINE, Priv]),
+	{ok, GqlQueryBin} =
+		file:read_file(
+			filename:join([
+				Priv, "..", "..", "..", "..", "lib", "tag_check", "priv",
+				"get_text_file.gql"
+			])
+	),
+	GitToken = try
+		NetRcFile = case os:type() of
+			{win32, nt} ->
+				filename:join(
+					os:getenv("HOMEDRIVE") ++ os:getenv("HOMEPATH"), "_netrc"
+				)
+		end,
+		{ok, NetRcBin} = file:read_file(NetRcFile),
+		{match, [Token]} =
+			re:run(NetRcBin, ".*login ([^\s]*)",
+					[dotall, {capture, [1], list}]),
+		Token
+	catch _:Exception ->
+		error({bad_gittoken, Exception})
+	end,
+	Data = read_file(
+		?GQUrl, GitToken, GqlQueryBin, <<"K2InformaticsGmbH">>, <<"dderl">>,
+		<<"master:rebar.config">>
+	),
 	Term = binstr_to_term(Data),
 	io:format("~p:~p ~p~n", [?MODULE, ?LINE, Term]).
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
+%
+-ifdef(CONDOLE).
 
-read_file(GQUrl, Token, Repo, Owner, Branch, PathFile) ->
-		{ok, {_Status, _Headers, Body}} = httpc:request(
-			post,
-			{GQUrl,
-			[{"Authorization", "bearer " ++ Token}, {"User-Agent", "TagChecker/1.0"}],
+curl -H "Authorization: bearer `cat ~/_netrc | awk '/login.*/ {print $2}'`" \
+	-X POST -d "@viewer_login.json" https://api.github.com/graphql
+
+curl -H "Authorization: bearer `cat ~/_netrc | awk '/login.*/ {print $2}'`" \
+	-X POST -d "@text_file.json" https://api.github.com/graphql
+
+ok.
+
+-endif.
+
+read_file(GQUrl, Token, GqlBin, Owner, Repo, File) ->
+	{ok, {_Status, _Headers, Body}} = httpc:request(
+		post,
+		{
+			GQUrl,
+			[{"Authorization", "bearer " ++ Token},
+				{"User-Agent", "TagChecker/1.0"}],
 			"application/json",
-			jsx:encode(#{query => 
-				list_to_binary(
-						"query {"
-							" repository(name: \""++Repo++"\", owner: \""++Owner++"\") {"
-								" object(expression: \""++Branch++":"++PathFile++"\") {"
-									"... on Blob { text }"
-								"}"
-							"}"
-						"}")})
-			}, [], [{body_format, binary}]
-		),
+			jsx:encode(
+				#{
+					query => GqlBin,
+					variables => #{
+						owner => Owner,
+						repo => Repo,
+						path => File
+					}
+				}
+			)
+		}, [], [{body_format, binary}]
+	),
 	#{<<"data">> :=
 		#{<<"repository">> :=
 			#{<<"object">> :=
@@ -51,10 +92,10 @@ binstr_to_term(BinTermStr) when is_binary(BinTermStr) ->
 binstr_to_term(TermStr) ->
 	{ok, ErlTokensAll, _} = erl_scan:string(TermStr),
 	[begin
-  	{ok,ErlAbsForm} = erl_parse:parse_exprs(ErlTokens),
-  	{value, Value,_} = erl_eval:exprs(ErlAbsForm, []),
+  		{ok,ErlAbsForm} = erl_parse:parse_exprs(ErlTokens),
+  		{value, Value,_} = erl_eval:exprs(ErlAbsForm, []),
 		Value
-	end || ErlTokens <- split_dot(ErlTokensAll)].
+	 end || ErlTokens <- split_dot(ErlTokensAll)].
 
 split_dot(Tokens) -> split_dot(Tokens, [[]]).
 split_dot([], [[]|AccRest]) -> lists:reverse(AccRest);

@@ -1,0 +1,9 @@
+{
+	"query":
+		"query ($owner: String!, $repo: String!, $path: String!) { repository(name: $repo, owner: $owner) { object(expression: $path) { ... on Blob { text } } } }",
+	"variables": {
+		"owner" : "K2InformaticsGmbH",
+		"repo" : "dderl",
+		"path" : "master:rebar.config"
+	}
+}
